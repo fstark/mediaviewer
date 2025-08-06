@@ -2,6 +2,8 @@
 
 A web-based media gallery for viewing images and videos. This Python program recursively scans a directory for media files and creates a simple HTTP server to display them in a web interface.
 
+Note: Claude wrote most of this by itself. The quality is as sloppy as expected for AI generated code.
+
 ## Features
 
 - **Recursive Directory Scanning**: Automatically finds all media files in subdirectories
