@@ -1,0 +1,12 @@
+# This program uses only Python standard library modules
+# No additional dependencies required
+
+# Standard library modules used:
+# - os
+# - sys
+# - argparse
+# - pathlib
+# - http.server
+# - urllib.parse
+# - json
+# - mimetypes
