@@ -1,5 +1,6 @@
-# This program uses only Python standard library modules
-# No additional dependencies required
+# Dependencies required for the media viewer
+Pillow>=8.0.0
+opencv-python>=4.5.0
 
 # Standard library modules used:
 # - os

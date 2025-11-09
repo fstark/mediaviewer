@@ -13,11 +13,247 @@ import urllib.parse
 import json
 import mimetypes
 import time
+import hashlib
+from PIL import Image
+import concurrent.futures
+import struct
+import cv2
+
+# Global constants
+PREVIEW_FRAME_DURATION_MS = 300  # Duration per frame in animated previews
+PREVIEW_FRAME_COUNT = 11  # Number of frames to extract for previews (includes first and last)
+
+class MediaFile:
+    def __init__(self, path):
+        self.path = path
+        self.file_size = self.get_file_size()
+        self.is_video = self.check_is_video()
+        self.file_type = os.path.splitext(path)[1][1:].upper()
+        self._md5 = None
+        self.detect_actual_file_type()
+
+    @property
+    def md5(self):
+        if self._md5 is None:
+            self._md5 = hashlib.md5(self.path.encode('utf-8')).hexdigest()
+        return self._md5
+
+    def get_file_size(self):
+        try:
+            return os.path.getsize(self.path)
+        except OSError:
+            return 0
+
+    def check_is_video(self):
+        return self.path.lower().endswith(('.mp4', '.m4v'))
+
+    def detect_actual_file_type(self):
+        """Detect actual file type by reading file header magic numbers"""
+        try:
+            with open(self.path, 'rb') as f:
+                header = f.read(32)  # Read first 32 bytes
+            
+            actual_type = None
+            
+            # Check magic numbers for common formats
+            if header.startswith(b'\xFF\xD8\xFF'):
+                actual_type = 'JPEG'
+            elif header.startswith(b'\x89PNG\r\n\x1a\n'):
+                actual_type = 'PNG'
+            elif header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+                actual_type = 'GIF'
+            elif len(header) >= 12 and header[4:8] == b'ftyp':
+                actual_type = 'MP4'
+            elif header.startswith(b'RIFF') and b'WEBP' in header[:20]:
+                actual_type = 'WEBP'
+            elif header.startswith(b'BM'):
+                actual_type = 'BMP'
+            
+            if actual_type is None:
+                print(f"Warning: File not recognized by content: {self.path}")
+            # elif actual_type != self.file_type:
+            #     print(f"Warning: File content ({actual_type}) doesn't match extension ({self.file_type}): {self.path}")
+                
+        except (IOError, OSError) as e:
+            print(f"Warning: Could not read file header for {self.path}: {e}")
+
+    def get_preview(self):
+        """Return (content_type, content) for preview"""
+        if self.is_video or self.path.lower().endswith('.gif'):
+            # Videos and GIFs get .gif previews
+            preview_path = f'/tmp/mediaviewercache/previews/{self.md5}.gif'
+            if not os.path.exists(preview_path):
+                try:
+                    # Both videos and GIFs can be processed the same way
+                    generate_video_preview(self.path, self.md5)
+                except Exception as e:
+                    print(f"Error generating preview for {self.path}: {e}")
+            if os.path.exists(preview_path):
+                try:
+                    with open(preview_path, 'rb') as f:
+                        content = f.read()
+                    return ('image/gif', content)
+                except Exception:
+                    pass
+        else:
+            # Other image files get .png previews
+            image_exts = ('.png', '.jpg', '.jpeg')
+            if self.path.lower().endswith(image_exts):
+                preview_path = f'/tmp/mediaviewercache/previews/{self.md5}.png'
+                if not os.path.exists(preview_path):
+                    try:
+                        generate_preview(self.path, self.md5)
+                    except Exception as e:
+                        print(f"Error generating preview for {self.path}: {e}")
+                if os.path.exists(preview_path):
+                    try:
+                        with open(preview_path, 'rb') as f:
+                            content = f.read()
+                        return ('image/png', content)
+                    except Exception:
+                        pass
+        # If we can't generate or find a preview, return None
+        # The caller will handle this by serving a placeholder
+        return None
+
+def generate_preview(image_path, md5):
+    """Convert image to PNG, resize/crop to 320x200, and save in cache"""
+    preview_path = f'/tmp/mediaviewercache/previews/{md5}.png'
+    with Image.open(image_path) as img:
+        # Calculate aspect ratios
+        target_w, target_h = 320, 200
+        src_w, src_h = img.size
+        src_ratio = src_w / src_h
+        target_ratio = target_w / target_h
+        # Resize and crop
+        if src_ratio > target_ratio:
+            # Source is wider: resize by height, crop width
+            scale = target_h / src_h
+            new_w = int(src_w * scale)
+            img = img.resize((new_w, target_h), Image.LANCZOS)
+            left = (new_w - target_w) // 2
+            img = img.crop((left, 0, left + target_w, target_h))
+        else:
+            # Source is taller: resize by width, crop height
+            scale = target_w / src_w
+            new_h = int(src_h * scale)
+            img = img.resize((target_w, new_h), Image.LANCZOS)
+            top = (new_h - target_h) // 2
+            img = img.crop((0, top, target_w, top + target_h))
+        img.save(preview_path, format='PNG')
+
+
+def extract_video_frames(video_path, num_frames=PREVIEW_FRAME_COUNT):
+    """Extract frames from video at evenly spaced intervals"""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {video_path}")
+    
+    try:
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0:
+            raise ValueError(f"Video has no frames: {video_path}")
+        
+        frames = []
+        frame_indices = []
+        
+        # Calculate frame positions evenly distributed from 0% to 100%
+        if total_frames == 1:
+            frame_indices = [0]
+        elif total_frames < num_frames:
+            # If video has fewer frames than requested, use all available
+            frame_indices = list(range(total_frames))
+        else:
+            # Evenly distribute frames from 0% to 100%
+            # For num_frames=5: positions 0, 0.25, 0.5, 0.75, 1.0 of total_frames-1
+            frame_indices = []
+            for i in range(num_frames):
+                if num_frames == 1:
+                    position = 0
+                else:
+                    position = i / (num_frames - 1)  # 0.0, 0.25, 0.5, 0.75, 1.0
+                frame_idx = int(position * (total_frames - 1))
+                frame_indices.append(frame_idx)
+        
+        for frame_idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if ret:
+                # Convert BGR to RGB for PIL
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                frames.append(pil_image)
+        
+        return frames
+    
+    finally:
+        cap.release()
+
+
+def resize_and_crop_frame(frame, target_w=320, target_h=200):
+    """Resize and crop a frame to target dimensions"""
+    src_w, src_h = frame.size
+    src_ratio = src_w / src_h
+    target_ratio = target_w / target_h
+    
+    # Resize and crop (same logic as generate_preview)
+    if src_ratio > target_ratio:
+        # Source is wider: resize by height, crop width
+        scale = target_h / src_h
+        new_w = int(src_w * scale)
+        frame = frame.resize((new_w, target_h), Image.LANCZOS)
+        left = (new_w - target_w) // 2
+        frame = frame.crop((left, 0, left + target_w, target_h))
+    else:
+        # Source is taller: resize by width, crop height
+        scale = target_w / src_w
+        new_h = int(src_h * scale)
+        frame = frame.resize((target_w, new_h), Image.LANCZOS)
+        top = (new_h - target_h) // 2
+        frame = frame.crop((0, top, target_w, top + target_h))
+    
+    return frame
+
+
+def generate_video_preview(video_path, md5):
+    """Generate animated GIF preview for video"""
+    preview_path = f'/tmp/mediaviewercache/previews/{md5}.gif'
+    
+    try:
+        # Extract frames from video
+        frames = extract_video_frames(video_path, PREVIEW_FRAME_COUNT)
+        if not frames:
+            raise ValueError("No frames extracted from video")
+        
+        # Resize and crop all frames
+        processed_frames = []
+        for frame in frames:
+            processed_frame = resize_and_crop_frame(frame, 320, 200)
+            processed_frames.append(processed_frame)
+        
+        # Save as animated GIF
+        processed_frames[0].save(
+            preview_path,
+            format='GIF',
+            save_all=True,
+            append_images=processed_frames[1:],
+            duration=PREVIEW_FRAME_DURATION_MS,
+            loop=0  # infinite loop
+        )
+        
+    except Exception as e:
+        # If video processing fails, create a static placeholder frame
+        print(f"Warning: Could not generate video preview for {video_path}: {e}")
+        # Create a simple error placeholder
+        placeholder = Image.new('RGB', (320, 200), color='#333333')
+        placeholder.save(preview_path, format='GIF')
+
 
 class MediaViewerHandler(BaseHTTPRequestHandler):
-    def __init__(self, media_files, base_dir, *args, **kwargs):
+    def __init__(self, media_files, base_dir, verbose=False, *args, **kwargs):
         self.media_files = media_files
         self.base_dir = base_dir
+        self.verbose = verbose
         self.start_time = None
         self.response_size = 0
         super().__init__(*args, **kwargs)
@@ -97,21 +333,14 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         
         media_data = []
         for i in range(start_idx, min(end_idx, total_items)):
-            file_path = self.media_files[i]
-            is_video = self.is_video_file(file_path)
-            
-            # Get file size
-            try:
-                file_size = os.path.getsize(file_path)
-            except OSError:
-                file_size = 0
-            
+            media_file = self.media_files[i]
             media_data.append({
                 'index': i,
                 'url': f'/media/{i}',
                 'preview_url': f'/preview/{i}',
-                'is_video': is_video,
-                'file_size': file_size
+                'is_video': media_file.is_video,
+                'file_size': media_file.file_size,
+                'file_type': media_file.file_type
             })
         
         response_data = {
@@ -132,14 +361,21 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_all_media_list(self):
         """Serve all media files list as JSON for viewer navigation"""
         media_data = []
-        for i, file_path in enumerate(self.media_files):
-            is_video = self.is_video_file(file_path)
+        for i, media_file in enumerate(self.media_files):
+            rel_path = os.path.relpath(media_file.path, self.base_dir)
+            path_parts = rel_path.split(os.sep)
+            if len(path_parts) > 2:
+                display_path = os.path.join(path_parts[-3], path_parts[-2], path_parts[-1])
+            elif len(path_parts) > 1:
+                display_path = os.path.join(path_parts[-2], path_parts[-1])
+            else:
+                display_path = path_parts[-1]
             media_data.append({
                 'index': i,
                 'url': f'/media/{i}',
-                'is_video': is_video
+                'is_video': media_file.is_video,
+                'display_path': display_path
             })
-        
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
@@ -148,36 +384,30 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_media_preview(self, media_id):
         """Serve a media preview - placeholder for large files, smaller version for others"""
         if 0 <= media_id < len(self.media_files):
-            file_path = self.media_files[media_id]
-            try:
-                file_size = os.path.getsize(file_path)
-                max_size = 2 * 1024 * 1024  # 2MB
-                
-                if file_size > max_size:
-                    # Return a placeholder for large files
-                    self.serve_placeholder(media_id, file_size)
-                else:
-                    # Serve the actual file for smaller files
-                    with open(file_path, 'rb') as f:
-                        content = f.read()
-                    
-                    mime_type, _ = mimetypes.guess_type(file_path)
-                    if mime_type is None:
-                        mime_type = 'application/octet-stream'
-                    
-                    self.send_response(200)
-                    self.send_header('Content-type', mime_type)
-                    self.send_header('Content-Length', str(len(content)))
-                    self.end_headers()
-                    self.write_response(content)
-            except IOError:
-                self.send_error(404)
+            media_file = self.media_files[media_id]
+            
+            # Log original filename if verbose mode is enabled
+            if self.verbose:
+                rel_path = os.path.relpath(media_file.path, self.base_dir)
+                self.log_message(f"Serving preview for: {rel_path}")
+            
+            preview = media_file.get_preview()
+            if preview is not None:
+                mime_type, content = preview
+                self.send_response(200)
+                self.send_header('Content-type', mime_type)
+                self.send_header('Content-Length', str(len(content)))
+                self.end_headers()
+                self.write_response(content)
+            else:
+                self.serve_placeholder(media_id, media_file.file_size)
         else:
             self.send_error(404)
 
     def serve_placeholder(self, media_id, file_size):
         """Generate and serve a placeholder image for large media files"""
-        is_video = self.is_video_file(self.media_files[media_id])
+        media_file = self.media_files[media_id]
+        is_video = media_file.is_video
         size_mb = file_size / (1024 * 1024)
         
         # Create SVG placeholder with proper SVG icons instead of emoji
@@ -220,9 +450,15 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_media_by_id(self, media_id):
         """Serve a media file by its numeric ID with Range Request support"""
         if 0 <= media_id < len(self.media_files):
-            file_path = self.media_files[media_id]
+            media_file = self.media_files[media_id]
+            
+            # Log original filename if verbose mode is enabled
+            if self.verbose:
+                rel_path = os.path.relpath(media_file.path, self.base_dir)
+                self.log_message(f"Serving file: {rel_path}")
+            
             try:
-                file_size = os.path.getsize(file_path)
+                file_size = media_file.file_size
                 
                 # Get Range header if present
                 range_header = self.headers.get('Range')
@@ -240,7 +476,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                         content_length = end - start + 1
                         
                         # Read the requested range
-                        with open(file_path, 'rb') as f:
+                        with open(media_file.path, 'rb') as f:
                             f.seek(start)
                             content = f.read(content_length)
                         
@@ -250,7 +486,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                         self.send_header('Accept-Ranges', 'bytes')
                         self.send_header('Content-Length', str(content_length))
                         
-                        mime_type, _ = mimetypes.guess_type(file_path)
+                        mime_type, _ = mimetypes.guess_type(media_file.path)
                         if mime_type is None:
                             mime_type = 'application/octet-stream'
                         self.send_header('Content-Type', mime_type)
@@ -260,10 +496,10 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                         
                     except (ValueError, IndexError):
                         # Invalid range, serve full file
-                        self.serve_full_file(file_path, file_size)
+                        self.serve_full_file(media_file.path, file_size)
                 else:
                     # No range request, serve full file with range support headers
-                    self.serve_full_file(file_path, file_size)
+                    self.serve_full_file(media_file.path, file_size)
                     
             except IOError:
                 self.send_error(404)
@@ -330,6 +566,16 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         .header {{
             text-align: center;
             margin-bottom: 30px;
+        }}
+        .current-path {{
+            font-family: monospace;
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+            word-break: break-all;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
         }}
         .pagination {{
             display: flex;
@@ -429,6 +675,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     <div class="header">
         <h1>Media Viewer</h1>
         <p>Click on any image or video to view in full screen</p>
+        <div id="currentPath" class="current-path"></div>
     </div>
     
     <div class="pagination" id="topPagination">
@@ -489,30 +736,19 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                     const container = document.createElement('div');
                     container.className = 'media-container';
                     
-                    if (media.is_video) {{
-                        const video = document.createElement('video');
-                        video.src = media.preview_url;
-                        video.className = 'media-preview';
-                        video.muted = true;
-                        container.appendChild(video);
-                        
-                        const playOverlay = document.createElement('div');
-                        playOverlay.className = 'play-overlay';
-                        playOverlay.innerHTML = '▶';
-                        container.appendChild(playOverlay);
-                    }} else {{
-                        const img = document.createElement('img');
-                        img.src = media.preview_url;
-                        img.className = 'media-preview';
-                        img.alt = `Media ${{media.index + 1}}`;
-                        container.appendChild(img);
-                    }}
+                    // All previews are now images (GIFs for videos, PNGs for images)
+                    const img = document.createElement('img');
+                    img.src = media.preview_url;
+                    img.className = 'media-preview';
+                    img.alt = `Media ${{media.index + 1}}`;
+                    container.appendChild(img);
                     
                     const info = document.createElement('div');
                     info.className = 'media-info';
                     const fileName = `Media ${{media.index + 1}}`;
                     const fileSize = formatFileSize(media.file_size);
-                    info.innerHTML = `<span>${{fileName}}</span><span>${{fileSize}}</span>`;
+                    const fileType = media.file_type;
+                    info.innerHTML = `<span>${{fileName}}</span><span>${{fileSize}} • ${{fileType}}</span>`;
                     
                     item.appendChild(container);
                     item.appendChild(info);
@@ -596,6 +832,15 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             align-items: center;
             z-index: 100;
         }}
+        .media-title {{
+            font-family: monospace;
+            font-size: 14px;
+            color: rgba(255,255,255,0.8);
+            text-align: center;
+            word-break: break-all;
+            max-width: 400px;
+            line-height: 1.2;
+        }}
         .nav-button {{
             background: rgba(0,0,0,0.7);
             color: white;
@@ -655,6 +900,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     <div class="viewer-container">
         <div class="controls">
             <button class="nav-button" onclick="goBack()">← Back to Gallery</button>
+            <div class="media-title" id="mediaTitle">Loading...</div>
             <div>
                 <span id="counter">1 of 1</span>
             </div>
@@ -704,6 +950,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             }}
             
             document.getElementById('counter').textContent = `${{index + 1}} of ${{mediaFiles.length}}`;
+            document.getElementById('mediaTitle').textContent = media.display_path || `Media ${{index + 1}}`;
         }}
         
         function updateControls() {{
@@ -754,45 +1001,94 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
 </html>'''
 
 
-def create_handler_with_media(media_files, base_dir):
+def create_handler_with_media(media_files, base_dir, verbose=False):
     """Create a handler class with media files and base directory"""
     def handler(*args, **kwargs):
-        return MediaViewerHandler(media_files, base_dir, *args, **kwargs)
+        return MediaViewerHandler(media_files, base_dir, verbose, *args, **kwargs)
     return handler
 
 
-def scan_for_media_files(directory):
+def scan_for_media_files(directory, verbose=False):
     """Recursively scan directory for media files"""
-    media_extensions = {'.png', '.jpg', '.jpeg', '.mp4', '.m4v'}
+    media_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.mp4', '.m4v'}
     media_files = []
+    unrecognized_files = []
     
     try:
         for root, dirs, files in os.walk(directory):
             for file in files:
-                if any(file.lower().endswith(ext) for ext in media_extensions):
-                    full_path = os.path.join(root, file)
-                    try:
-                        # Skip 0-byte files
-                        if os.path.getsize(full_path) > 0:
-                            media_files.append(full_path)
-                    except OSError:
-                        # Skip files that can't be accessed (permissions, broken symlinks, etc.)
+                full_path = os.path.join(root, file)
+                try:
+                    # Skip 0-byte files
+                    file_size = os.path.getsize(full_path)
+                    if file_size == 0:
                         continue
+                        
+                    if any(file.lower().endswith(ext) for ext in media_extensions):
+                        media_files.append(MediaFile(full_path))
+                    elif verbose:
+                        # Track unrecognized files for verbose output
+                        unrecognized_files.append(full_path)
+                        
+                except OSError:
+                    continue
     except PermissionError as e:
         print(f"Warning: Permission denied accessing {e.filename}")
     except Exception as e:
         print(f"Error scanning directory: {e}")
     
-    return sorted(media_files)
+    # In verbose mode, show all unrecognized files
+    if verbose and unrecognized_files:
+        print(f"\nFound {len(unrecognized_files)} files not recognized as media files:")
+        for file_path in sorted(unrecognized_files):
+            rel_path = os.path.relpath(file_path, directory)
+            print(f"  {rel_path}")
+        print()
+    
+    return sorted(media_files, key=lambda mf: mf.path)
+
+
+def build_cache(media_files):
+    """Build previews for all media files in the cache, with progress display and multithreading"""
+    # Separate images and videos for different processing
+    image_exts = ('.png', '.jpg', '.jpeg', '.gif')
+    images = [mf for mf in media_files if not mf.is_video and mf.path.lower().endswith(image_exts)]
+    videos = [mf for mf in media_files if mf.is_video]
+    
+    total_images = len(images)
+    total_videos = len(videos)
+    total = total_images + total_videos
+    
+    print(f"Building preview cache for {total} files ({total_images} images, {total_videos} videos) (multithreaded)...")
+    
+    def build_one(mf):
+        mf.get_preview()
+        return mf
+    
+    # Process all files together
+    all_files = images + videos
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+        futures = {executor.submit(build_one, mf): mf for mf in all_files}
+        for idx, future in enumerate(concurrent.futures.as_completed(futures), 1):
+            mf = futures[future]
+            file_type = "video" if mf.is_video else "image"
+            print(f"  [{idx}/{total}] {file_type}: {os.path.basename(mf.path)}", end='\r', flush=True)
+    print(f"\nBuilt {total} previews ({total_images} images, {total_videos} videos).")
 
 
 def main():
     parser = argparse.ArgumentParser(description='Simple Media Viewer - Web-based media gallery')
     parser.add_argument('directory', help='Directory to scan for media files')
     parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run server on (default: 8000)')
-    
+    parser.add_argument('-v', '--verbose', action='store_true', help='Display original file names when serving files')
+    parser.add_argument('--build-cache', action='store_true', help='Build image preview cache at startup')
     args = parser.parse_args()
-    
+
+    # Create cache directories
+    cache_dir = '/tmp/mediaviewercache'
+    previews_dir = os.path.join(cache_dir, 'previews')
+    os.makedirs(previews_dir, exist_ok=True)
+
     # Validate directory
     if not os.path.isdir(args.directory):
         print(f"Error: '{args.directory}' is not a valid directory")
@@ -803,16 +1099,19 @@ def main():
     
     # Scan for media files
     print(f"Scanning for media files in: {base_dir}")
-    media_files = scan_for_media_files(base_dir)
-    
+    media_files = scan_for_media_files(base_dir, args.verbose)
+
     if not media_files:
-        print("No media files found (looking for: png, jpg, jpeg, mp4, m4v)")
+        print("No media files found (looking for: png, jpg, jpeg, gif, mp4, m4v)")
         sys.exit(1)
-    
+
     print(f"Found {len(media_files)} media files")
-    
+
+    if args.build_cache:
+        build_cache(media_files)
+
     # Create handler with media files
-    handler_class = create_handler_with_media(media_files, base_dir)
+    handler_class = create_handler_with_media(media_files, base_dir, args.verbose)
     
     # Start server
     server = HTTPServer(('0.0.0.0', args.port), handler_class)
