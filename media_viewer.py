@@ -30,7 +30,6 @@ class MediaFile:
         self.is_video = self.check_is_video()
         self.file_type = os.path.splitext(path)[1][1:].upper()
         self._md5 = None
-        self.detect_actual_file_type()
 
     @property
     def md5(self):
@@ -46,36 +45,6 @@ class MediaFile:
 
     def check_is_video(self):
         return self.path.lower().endswith(('.mp4', '.m4v'))
-
-    def detect_actual_file_type(self):
-        """Detect actual file type by reading file header magic numbers"""
-        try:
-            with open(self.path, 'rb') as f:
-                header = f.read(32)  # Read first 32 bytes
-            
-            actual_type = None
-            
-            # Check magic numbers for common formats
-            if header.startswith(b'\xFF\xD8\xFF'):
-                actual_type = 'JPEG'
-            elif header.startswith(b'\x89PNG\r\n\x1a\n'):
-                actual_type = 'PNG'
-            elif header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
-                actual_type = 'GIF'
-            elif len(header) >= 12 and header[4:8] == b'ftyp':
-                actual_type = 'MP4'
-            elif header.startswith(b'RIFF') and b'WEBP' in header[:20]:
-                actual_type = 'WEBP'
-            elif header.startswith(b'BM'):
-                actual_type = 'BMP'
-            
-            if actual_type is None:
-                print(f"Warning: File not recognized by content: {self.path}")
-            # elif actual_type != self.file_type:
-            #     print(f"Warning: File content ({actual_type}) doesn't match extension ({self.file_type}): {self.path}")
-                
-        except (IOError, OSError) as e:
-            print(f"Warning: Could not read file header for {self.path}: {e}")
 
     def get_preview(self):
         """Return (content_type, content) for preview"""
@@ -324,7 +293,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_media_list(self):
         """Serve the media files list as JSON with pagination support"""
         page = int(self.headers.get('X-Page', 1))
-        items_per_page = 500
+        items_per_page = 50
         start_idx = (page - 1) * items_per_page
         end_idx = start_idx + items_per_page
         
@@ -974,7 +943,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         
         function goBack() {{
             // Calculate which page the current image is on
-            const itemsPerPage = 500;
+            const itemsPerPage = 50;
             const currentPage = Math.floor(currentIndex / itemsPerPage) + 1;
             window.location.href = `/?page=${{currentPage}}`;
         }}
@@ -1050,6 +1019,10 @@ def scan_for_media_files(directory, verbose=False):
 
 def build_cache(media_files):
     """Build previews for all media files in the cache, with progress display and multithreading"""
+    # Ensure cache directory exists
+    cache_dir = '/tmp/mediaviewercache/previews'
+    os.makedirs(cache_dir, exist_ok=True)
+    
     # Separate images and videos for different processing
     image_exts = ('.png', '.jpg', '.jpeg', '.gif')
     images = [mf for mf in media_files if not mf.is_video and mf.path.lower().endswith(image_exts)]

@@ -14,15 +14,30 @@ def detect_file_type(file_path):
     """Detect actual file type by reading file header magic numbers"""
     try:
         with open(file_path, 'rb') as f:
-            header = f.read(32)  # Read first 32 bytes
+            header = f.read(512)  # Read first 512 bytes to catch more HTML patterns
         
         # Check for empty files first
         if len(header) == 0:
             return 'empty'
         
         # Check for HTML files (case insensitive)
-        if header.lower().startswith(b'<!doctype html>'):
+        # Handle both direct start and whitespace-prefixed DOCTYPE
+        header_lower = header.lower()
+        if header_lower.startswith(b'<!doctype html>'):
             return 'html'
+        elif header_lower.lstrip().startswith(b'<!doctype'):
+            return 'html'
+        elif b'<meta http-' in header_lower:
+            return 'html'
+        
+        # Check for JSON files (starts with '{' followed by '"')
+        header_stripped = header.lstrip()
+        if len(header_stripped) >= 2 and header_stripped.startswith(b'{"'):
+            return 'json'
+        
+        # Check for TXT files containing "This content is"
+        if b'this content is' in header_lower:
+            return 'txt'
         
         # Check magic numbers for common formats
         if header.startswith(b'\xFF\xD8\xFF'):
@@ -119,8 +134,8 @@ def process_directory(directory, dry_run=False, prune=False):
                 files_processed += 1
                 actual_type = detect_file_type(file_path)
                 
-                if actual_type in ['html', 'empty']:
-                    # HTML or empty files - remove if pruning
+                if actual_type in ['html', 'json', 'txt', 'empty']:
+                    # HTML, JSON, TXT or empty files - remove if pruning
                     rel_path = os.path.relpath(file_path, directory)
                     if prune:
                         if dry_run:
