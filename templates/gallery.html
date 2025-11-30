@@ -86,8 +86,8 @@
                     const fileName = `Media ${media.index + 1}`;
                     const fileSize = formatFileSize(media.file_size);
                     const fileType = media.file_type;
-                    info.innerHTML = `<span>${fileName}</span><span>${fileSize} • ${fileType}</span>`;
-                    
+                    info.innerHTML = `<span class="caption-left">${fileName}</span><span class="caption-right">${fileSize} • ${fileType}</span>`;
+
                     item.appendChild(container);
                     item.appendChild(info);
                     gallery.appendChild(item);

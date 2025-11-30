@@ -84,18 +84,33 @@ body {
     display: block;
 }
 
-.media-info {
+
+/* Gallery-specific media-info (caption) */
+.gallery .media-info {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: #fff;
-    color: #555;
-    padding: 6px 8px;
-    font-size: 12px;
+    color: #222;
+    padding: 7px 12px 7px 12px;
+    font-size: 13px;
     font-weight: bold;
-    text-align: left;
-    height: 24px;
     display: flex;
-    align-items: center;
     justify-content: space-between;
+    align-items: center;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
     box-sizing: border-box;
+    z-index: 2;
+    text-align: left;
+}
+
+.media-item {
+    position: relative;
+    /* ...existing code... */
 }
 
 .play-overlay {
