@@ -43,12 +43,13 @@
             font-weight: 500;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             transition: transform 0.2s, box-shadow 0.2s;
-            cursor: default;
+            cursor: pointer;
         }
         
         .word-tag:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
         }
         
         .word-tag .word {
@@ -78,6 +79,41 @@
             background: #764ba2;
         }
         
+        .reset-button {
+            display: inline-block;
+            margin: 20px;
+            padding: 10px 20px;
+            background: #ff6b6b;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .reset-button:hover {
+            background: #ee5a52;
+        }
+        
+        .filter-status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px auto;
+            max-width: 600px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .filter-status.active {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffc107;
+        }
+        
         .loading {
             text-align: center;
             padding: 50px;
@@ -88,11 +124,20 @@
 </head>
 <body>
     <div class="words-container">
-        <a href="/" class="back-link">← Back to Gallery</a>
+        <div style="text-align: center;">
+            <a href="/" class="back-link">← Back to Gallery</a>
+            <button class="reset-button" onclick="resetFilter()" id="resetBtn">🔄 Reset Filter</button>
+        </div>
         
         <div class="words-header">
             <h1>Word Cloud</h1>
-            <p>Words extracted from all file paths</p>
+            <p>Click any word to filter the gallery</p>
+        </div>
+        <div style="text-align:center; margin-bottom:20px;">
+            <input type="text" id="wordFilter" placeholder="Type to filter words..." style="padding:8px 16px; border-radius:5px; border:1px solid #ccc; font-size:15px; width:300px; max-width:90%;">
+        </div>
+        <div class="filter-status" id="filterStatus">
+            No filter active
         </div>
         
         <div class="words-stats" id="stats">
@@ -104,6 +149,7 @@
     </div>
 
     <script>
+        let allWordTags = [];
         async function loadWords() {
             try {
                 const response = await fetch('/api/words');
@@ -113,25 +159,28 @@
                 const stats = document.getElementById('stats');
                 stats.textContent = `${data.total_words} unique words • ${data.total_occurrences} total occurrences`;
                 
+                // Update filter status
+                updateFilterStatus(data.current_selection, data.corpus_size);
+                
                 // Create word tags
                 const wordsCloud = document.getElementById('wordsCloud');
                 wordsCloud.innerHTML = '';
-                
+                allWordTags = [];
                 data.words.forEach(item => {
                     const tag = document.createElement('div');
                     tag.className = 'word-tag';
-                    
+                    tag.onclick = () => filterByWord(item.word);
+                    tag.dataset.word = item.word;
                     const word = document.createElement('span');
                     word.className = 'word';
                     word.textContent = item.word;
-                    
                     const count = document.createElement('span');
                     count.className = 'count';
                     count.textContent = item.count;
-                    
                     tag.appendChild(word);
                     tag.appendChild(count);
                     wordsCloud.appendChild(tag);
+                    allWordTags.push(tag);
                 });
                 
                 document.getElementById('loading').style.display = 'none';
@@ -143,8 +192,62 @@
             }
         }
         
+        function updateFilterStatus(current, total) {
+            const statusEl = document.getElementById('filterStatus');
+            if (current === total) {
+                statusEl.textContent = `Showing all ${total} files from corpus`;
+                statusEl.className = 'filter-status';
+            } else {
+                statusEl.textContent = `Filter active: ${current} of ${total} files`;
+                statusEl.className = 'filter-status active';
+            }
+        }
+        
+        async function filterByWord(word) {
+            try {
+                const response = await fetch(`/api/filter?word=${encodeURIComponent(word)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Redirect to gallery to see filtered results
+                    window.location.href = '/';
+                } else {
+                    console.error('Error applying filter:', data.error);
+                }
+            } catch (error) {
+                console.error('Error filtering:', error);
+            }
+        }
+        
+        async function resetFilter() {
+            try {
+                const response = await fetch('/api/reset');
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Redirect to gallery to see all files
+                    window.location.href = '/';
+                } else {
+                    console.error('Error resetting filter');
+                }
+            } catch (error) {
+                console.error('Error resetting:', error);
+            }
+        }
+        
         // Load words on page load
         loadWords();
+            // Filter word tags as user types
+            document.addEventListener('DOMContentLoaded', function() {
+                const filterInput = document.getElementById('wordFilter');
+                filterInput.addEventListener('input', function() {
+                    const filter = this.value.toLowerCase();
+                    allWordTags.forEach(tag => {
+                        const word = tag.dataset.word.toLowerCase();
+                        tag.style.display = word.includes(filter) ? '' : 'none';
+                    });
+                });
+            });
     </script>
 </body>
 </html>

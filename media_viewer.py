@@ -25,6 +25,8 @@ PREVIEW_FRAME_DURATION_MS = 300  # Duration per frame in animated previews
 PREVIEW_FRAME_COUNT = 11  # Number of frames to extract for previews (includes first and last)
 CACHE_DIR = None  # Will be set to <base_dir>/.mediaviewer
 WORD_COUNTS = {}  # Global word counter for all file paths
+CORPUS = []  # All media files found (never changes)
+MEDIA_FILES = []  # Current selection (can be filtered)
 
 class MediaFile:
     def __init__(self, path):
@@ -53,8 +55,8 @@ class MediaFile:
 
     def extract_words_from_path(self):
         """Extract words from file path and update global word counter"""
-        # Split on anything that's not alphanumeric
-        words = re.findall(r'[A-Za-z0-9]+', self.path)
+        # Split on anything that's not alphanumeric or '-'
+        words = re.findall(r'[A-Za-z0-9-]+', self.path)
         # Convert to lowercase and count
         for word in words:
             word_lower = word.lower()
@@ -233,13 +235,17 @@ def generate_video_preview(video_path, md5):
 
 
 class MediaViewerHandler(BaseHTTPRequestHandler):
-    def __init__(self, media_files, base_dir, verbose=False, *args, **kwargs):
-        self.media_files = media_files
+    def __init__(self, base_dir, verbose=False, *args, **kwargs):
         self.base_dir = base_dir
         self.verbose = verbose
         self.start_time = None
         self.response_size = 0
         super().__init__(*args, **kwargs)
+    
+    @property
+    def media_files(self):
+        """Always use the current global MEDIA_FILES"""
+        return MEDIA_FILES
 
     def do_GET(self):
         self.start_time = time.time()
@@ -262,6 +268,11 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             self.serve_all_media_list()
         elif path == '/api/words':
             self.serve_words_data()
+        elif path == '/api/filter':
+            word = query.get('word', [''])[0]
+            self.serve_filter_by_word(word)
+        elif path == '/api/reset':
+            self.serve_reset_filter()
         elif path.startswith('/static/'):
             self.serve_static_file(path)
         elif path.startswith('/preview/'):
@@ -344,7 +355,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
 
     def serve_viewer(self, index):
         """Serve the full-screen viewer page"""
-        if 0 <= index < len(self.media_files):
+        if 0 <= index < len(MEDIA_FILES):
             template = self.load_template('viewer.html')
             if template is None:
                 self.send_error(500, "Template not found")
@@ -385,13 +396,41 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         response_data = {
             'words': words_data,
             'total_words': len(words_data),
-            'total_occurrences': sum(WORD_COUNTS.values())
+            'total_occurrences': sum(WORD_COUNTS.values()),
+            'current_selection': len(MEDIA_FILES),
+            'corpus_size': len(CORPUS)
         }
         
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
         self.write_response(json.dumps(response_data).encode())
+
+    def serve_filter_by_word(self, word):
+        """Filter MEDIA_FILES by word"""
+        global MEDIA_FILES
+        if word:
+            word_lower = word.lower()
+            MEDIA_FILES = [mf for mf in CORPUS if word_lower in mf.path.lower()]
+            result = {'success': True, 'word': word, 'count': len(MEDIA_FILES)}
+        else:
+            result = {'success': False, 'error': 'No word provided'}
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.write_response(json.dumps(result).encode())
+
+    def serve_reset_filter(self):
+        """Reset MEDIA_FILES to full corpus"""
+        global MEDIA_FILES
+        MEDIA_FILES = CORPUS[:]
+        result = {'success': True, 'count': len(MEDIA_FILES)}
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.write_response(json.dumps(result).encode())
 
     def serve_media_list(self):
         """Serve the media files list as JSON with pagination support"""
@@ -400,12 +439,12 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         start_idx = (page - 1) * items_per_page
         end_idx = start_idx + items_per_page
         
-        total_items = len(self.media_files)
+        total_items = len(MEDIA_FILES)
         total_pages = (total_items + items_per_page - 1) // items_per_page
         
         media_data = []
         for i in range(start_idx, min(end_idx, total_items)):
-            media_file = self.media_files[i]
+            media_file = MEDIA_FILES[i]
             media_data.append({
                 'index': i,
                 'url': f'/media/{i}',
@@ -433,7 +472,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_all_media_list(self):
         """Serve all media files list as JSON for viewer navigation"""
         media_data = []
-        for i, media_file in enumerate(self.media_files):
+        for i, media_file in enumerate(MEDIA_FILES):
             rel_path = os.path.relpath(media_file.path, self.base_dir)
             path_parts = rel_path.split(os.sep)
             if len(path_parts) > 2:
@@ -455,8 +494,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
 
     def serve_media_preview(self, media_id):
         """Serve a media preview - placeholder for large files, smaller version for others"""
-        if 0 <= media_id < len(self.media_files):
-            media_file = self.media_files[media_id]
+        if 0 <= media_id < len(MEDIA_FILES):
+            media_file = MEDIA_FILES[media_id]
             
             # Log original filename if verbose mode is enabled
             if self.verbose:
@@ -478,7 +517,7 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
 
     def serve_placeholder(self, media_id, file_size):
         """Generate and serve a placeholder image for large media files"""
-        media_file = self.media_files[media_id]
+        media_file = MEDIA_FILES[media_id]
         is_video = media_file.is_video
         size_mb = file_size / (1024 * 1024)
         
@@ -521,8 +560,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
 
     def serve_media_by_id(self, media_id):
         """Serve a media file by its numeric ID with Range Request support"""
-        if 0 <= media_id < len(self.media_files):
-            media_file = self.media_files[media_id]
+        if 0 <= media_id < len(MEDIA_FILES):
+            media_file = MEDIA_FILES[media_id]
             
             # Log original filename if verbose mode is enabled
             if self.verbose:
@@ -621,10 +660,10 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         return file_path.lower().endswith(('.mp4', '.m4v'))
 
 
-def create_handler_with_media(media_files, base_dir, verbose=False):
-    """Create a handler class with media files and base directory"""
+def create_handler_with_media(base_dir, verbose=False):
+    """Create a handler class with base directory"""
     def handler(*args, **kwargs):
-        return MediaViewerHandler(media_files, base_dir, verbose, *args, **kwargs)
+        return MediaViewerHandler(base_dir, verbose, *args, **kwargs)
     return handler
 
 
@@ -709,7 +748,7 @@ def build_cache(media_files):
 
 
 def main():
-    global CACHE_DIR
+    global CACHE_DIR, CORPUS, MEDIA_FILES
     
     parser = argparse.ArgumentParser(description='Simple Media Viewer - Web-based media gallery')
     parser.add_argument('directory', help='Directory to scan for media files')
@@ -736,19 +775,23 @@ def main():
     print(f"Scanning for media files in: {base_dir}")
     if args.select:
         print(f"Filtering files containing: '{args.select}'")
-    media_files = scan_for_media_files(base_dir, args.verbose, args.select)
+    scanned_files = scan_for_media_files(base_dir, args.verbose, args.select)
 
-    if not media_files:
+    if not scanned_files:
         print("No media files found (looking for: png, jpg, jpeg, gif, mp4, m4v)")
         sys.exit(1)
 
-    print(f"Found {len(media_files)} media files")
+    print(f"Found {len(scanned_files)} media files")
+    
+    # Set up corpus and initial selection
+    CORPUS = scanned_files
+    MEDIA_FILES = scanned_files[:]
 
     if args.build_cache:
-        build_cache(media_files)
+        build_cache(MEDIA_FILES)
 
-    # Create handler with media files
-    handler_class = create_handler_with_media(media_files, base_dir, args.verbose)
+    # Create handler with base directory
+    handler_class = create_handler_with_media(base_dir, args.verbose)
     
     # Start server
     server = HTTPServer(('0.0.0.0', args.port), handler_class)
