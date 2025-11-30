@@ -22,6 +22,7 @@ import cv2
 # Global constants
 PREVIEW_FRAME_DURATION_MS = 300  # Duration per frame in animated previews
 PREVIEW_FRAME_COUNT = 11  # Number of frames to extract for previews (includes first and last)
+CACHE_DIR = None  # Will be set to <base_dir>/.mediaviewer
 
 class MediaFile:
     def __init__(self, path):
@@ -50,7 +51,7 @@ class MediaFile:
         """Return (content_type, content) for preview"""
         if self.is_video or self.path.lower().endswith('.gif'):
             # Videos and GIFs get .gif previews
-            preview_path = f'/tmp/mediaviewercache/previews/{self.md5}.gif'
+            preview_path = f'{CACHE_DIR}/previews/{self.md5}.gif'
             if not os.path.exists(preview_path):
                 try:
                     # Both videos and GIFs can be processed the same way
@@ -68,7 +69,7 @@ class MediaFile:
             # Other image files get .png previews
             image_exts = ('.png', '.jpg', '.jpeg')
             if self.path.lower().endswith(image_exts):
-                preview_path = f'/tmp/mediaviewercache/previews/{self.md5}.png'
+                preview_path = f'{CACHE_DIR}/previews/{self.md5}.png'
                 if not os.path.exists(preview_path):
                     try:
                         generate_preview(self.path, self.md5)
@@ -87,7 +88,7 @@ class MediaFile:
 
 def generate_preview(image_path, md5):
     """Convert image to PNG, resize/crop to 320x200, and save in cache"""
-    preview_path = f'/tmp/mediaviewercache/previews/{md5}.png'
+    preview_path = f'{CACHE_DIR}/previews/{md5}.png'
     with Image.open(image_path) as img:
         # Calculate aspect ratios
         target_w, target_h = 320, 200
@@ -186,7 +187,7 @@ def resize_and_crop_frame(frame, target_w=320, target_h=200):
 
 def generate_video_preview(video_path, md5):
     """Generate animated GIF preview for video"""
-    preview_path = f'/tmp/mediaviewercache/previews/{md5}.gif'
+    preview_path = f'{CACHE_DIR}/previews/{md5}.gif'
     
     try:
         # Extract frames from video
@@ -585,6 +586,10 @@ def scan_for_media_files(directory, verbose=False, select_filter=None):
     
     try:
         for root, dirs, files in os.walk(directory):
+            # Skip the cache directory
+            if '.mediaviewer' in dirs:
+                dirs.remove('.mediaviewer')
+            
             for file in files:
                 full_path = os.path.join(root, file)
                 try:
@@ -624,8 +629,8 @@ def scan_for_media_files(directory, verbose=False, select_filter=None):
 def build_cache(media_files):
     """Build previews for all media files in the cache, with progress display and multithreading"""
     # Ensure cache directory exists
-    cache_dir = '/tmp/mediaviewercache/previews'
-    os.makedirs(cache_dir, exist_ok=True)
+    previews_dir = f'{CACHE_DIR}/previews'
+    os.makedirs(previews_dir, exist_ok=True)
     
     # Separate images and videos for different processing
     image_exts = ('.png', '.jpg', '.jpeg', '.gif')
@@ -654,6 +659,8 @@ def build_cache(media_files):
 
 
 def main():
+    global CACHE_DIR
+    
     parser = argparse.ArgumentParser(description='Simple Media Viewer - Web-based media gallery')
     parser.add_argument('directory', help='Directory to scan for media files')
     parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run server on (default: 8000)')
@@ -662,11 +669,6 @@ def main():
     parser.add_argument('--select', type=str, default=None, help='Only include files containing this string in their filename')
     args = parser.parse_args()
 
-    # Create cache directories
-    cache_dir = '/tmp/mediaviewercache'
-    previews_dir = os.path.join(cache_dir, 'previews')
-    os.makedirs(previews_dir, exist_ok=True)
-
     # Validate directory
     if not os.path.isdir(args.directory):
         print(f"Error: '{args.directory}' is not a valid directory")
@@ -674,6 +676,11 @@ def main():
     
     # Convert to absolute path
     base_dir = os.path.abspath(args.directory)
+    
+    # Set up cache directory inside the served path
+    CACHE_DIR = os.path.join(base_dir, '.mediaviewer')
+    previews_dir = os.path.join(CACHE_DIR, 'previews')
+    os.makedirs(previews_dir, exist_ok=True)
     
     # Scan for media files
     print(f"Scanning for media files in: {base_dir}")
