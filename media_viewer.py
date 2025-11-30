@@ -18,11 +18,13 @@ from PIL import Image
 import concurrent.futures
 import struct
 import cv2
+import re
 
 # Global constants
 PREVIEW_FRAME_DURATION_MS = 300  # Duration per frame in animated previews
 PREVIEW_FRAME_COUNT = 11  # Number of frames to extract for previews (includes first and last)
 CACHE_DIR = None  # Will be set to <base_dir>/.mediaviewer
+WORD_COUNTS = {}  # Global word counter for all file paths
 
 class MediaFile:
     def __init__(self, path):
@@ -31,6 +33,8 @@ class MediaFile:
         self.is_video = self.check_is_video()
         self.file_type = os.path.splitext(path)[1][1:].upper()
         self._md5 = None
+        # Extract words from path and update global counter
+        self.extract_words_from_path()
 
     @property
     def md5(self):
@@ -46,6 +50,15 @@ class MediaFile:
 
     def check_is_video(self):
         return self.path.lower().endswith(('.mp4', '.m4v'))
+
+    def extract_words_from_path(self):
+        """Extract words from file path and update global word counter"""
+        # Split on anything that's not alphanumeric
+        words = re.findall(r'[A-Za-z0-9]+', self.path)
+        # Convert to lowercase and count
+        for word in words:
+            word_lower = word.lower()
+            WORD_COUNTS[word_lower] = WORD_COUNTS.get(word_lower, 0) + 1
 
     def get_preview(self):
         """Return (content_type, content) for preview"""
@@ -241,10 +254,14 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         elif path == '/viewer':
             index = int(query.get('index', [0])[0])
             self.serve_viewer(index)
+        elif path == '/words':
+            self.serve_words_page()
         elif path == '/api/media':
             self.serve_media_list()
         elif path == '/api/all-media':
             self.serve_all_media_list()
+        elif path == '/api/words':
+            self.serve_words_data()
         elif path.startswith('/static/'):
             self.serve_static_file(path)
         elif path.startswith('/preview/'):
@@ -342,6 +359,39 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             self.write_response(html.encode())
         else:
             self.send_error(404)
+
+    def serve_words_page(self):
+        """Serve the words page"""
+        template = self.load_template('words.html')
+        if template is None:
+            self.send_error(500, "Template not found")
+            return
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.write_response(template.encode())
+
+    def serve_words_data(self):
+        """Serve the words data as JSON"""
+        # Sort words by count (descending), then alphabetically
+        sorted_words = sorted(WORD_COUNTS.items(), key=lambda x: (-x[1], x[0]))
+        
+        words_data = [
+            {'word': word, 'count': count}
+            for word, count in sorted_words
+        ]
+        
+        response_data = {
+            'words': words_data,
+            'total_words': len(words_data),
+            'total_occurrences': sum(WORD_COUNTS.values())
+        }
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.write_response(json.dumps(response_data).encode())
 
     def serve_media_list(self):
         """Serve the media files list as JSON with pagination support"""

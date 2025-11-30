@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Words - Media Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .words-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .words-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .words-stats {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .words-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .word-tag {
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+            cursor: default;
+        }
+        
+        .word-tag:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .word-tag .word {
+            margin-right: 8px;
+        }
+        
+        .word-tag .count {
+            background: rgba(255,255,255,0.3);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .back-link {
+            display: inline-block;
+            margin: 20px;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.2s;
+        }
+        
+        .back-link:hover {
+            background: #764ba2;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="words-container">
+        <a href="/" class="back-link">← Back to Gallery</a>
+        
+        <div class="words-header">
+            <h1>Word Cloud</h1>
+            <p>Words extracted from all file paths</p>
+        </div>
+        
+        <div class="words-stats" id="stats">
+            Loading...
+        </div>
+        
+        <div class="loading" id="loading">Loading words...</div>
+        <div class="words-cloud" id="wordsCloud" style="display: none;"></div>
+    </div>
+
+    <script>
+        async function loadWords() {
+            try {
+                const response = await fetch('/api/words');
+                const data = await response.json();
+                
+                // Update stats
+                const stats = document.getElementById('stats');
+                stats.textContent = `${data.total_words} unique words • ${data.total_occurrences} total occurrences`;
+                
+                // Create word tags
+                const wordsCloud = document.getElementById('wordsCloud');
+                wordsCloud.innerHTML = '';
+                
+                data.words.forEach(item => {
+                    const tag = document.createElement('div');
+                    tag.className = 'word-tag';
+                    
+                    const word = document.createElement('span');
+                    word.className = 'word';
+                    word.textContent = item.word;
+                    
+                    const count = document.createElement('span');
+                    count.className = 'count';
+                    count.textContent = item.count;
+                    
+                    tag.appendChild(word);
+                    tag.appendChild(count);
+                    wordsCloud.appendChild(tag);
+                });
+                
+                document.getElementById('loading').style.display = 'none';
+                wordsCloud.style.display = 'flex';
+                
+            } catch (error) {
+                console.error('Error loading words:', error);
+                document.getElementById('loading').textContent = 'Error loading words';
+            }
+        }
+        
+        // Load words on page load
+        loadWords();
+    </script>
+</body>
+</html>
