@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="header">
+        <h1>Media Viewer</h1>
+        <p>Click on any image or video to view in full screen</p>
+        <div id="currentPath" class="current-path"></div>
+    </div>
+    
+    <div class="pagination" id="topPagination">
+        <button id="topPrevBtn" onclick="changePage(-1)">← Previous</button>
+        <div class="page-info" id="topPageInfo">Page 1 of 1</div>
+        <button id="topNextBtn" onclick="changePage(1)">Next →</button>
+    </div>
+    
+    <div class="loading" id="loading">Loading media...</div>
+    <div class="gallery" id="gallery" style="display: none;"></div>
+    
+    <div class="pagination" id="bottomPagination">
+        <button id="bottomPrevBtn" onclick="changePage(-1)">← Previous</button>
+        <div class="page-info" id="bottomPageInfo">Page 1 of 1</div>
+        <button id="bottomNextBtn" onclick="changePage(1)">Next →</button>
+    </div>
+
+    <script>
+        let currentPage = {{PAGE}};
+        let totalPages = 1;
+        let totalItems = 0;
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+        
+        async function loadGallery(page = 1) {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('gallery').style.display = 'none';
+                
+                const response = await fetch('/api/media', {
+                    headers: {
+                        'X-Page': page.toString()
+                    }
+                });
+                const data = await response.json();
+                
+                const mediaFiles = data.media;
+                const pagination = data.pagination;
+                
+                currentPage = pagination.current_page;
+                totalPages = pagination.total_pages;
+                totalItems = pagination.total_items;
+                
+                const gallery = document.getElementById('gallery');
+                gallery.innerHTML = '';
+                
+                mediaFiles.forEach(media => {
+                    const item = document.createElement('div');
+                    item.className = 'media-item';
+                    item.onclick = () => window.location.href = `/viewer?index=${media.index}`;
+                    
+                    const container = document.createElement('div');
+                    container.className = 'media-container';
+                    
+                    // All previews are now images (GIFs for videos, PNGs for images)
+                    const img = document.createElement('img');
+                    img.src = media.preview_url;
+                    img.className = 'media-preview';
+                    img.alt = `Media ${media.index + 1}`;
+                    container.appendChild(img);
+                    
+                    const info = document.createElement('div');
+                    info.className = 'media-info';
+                    const fileName = `Media ${media.index + 1}`;
+                    const fileSize = formatFileSize(media.file_size);
+                    const fileType = media.file_type;
+                    info.innerHTML = `<span>${fileName}</span><span>${fileSize} • ${fileType}</span>`;
+                    
+                    item.appendChild(container);
+                    item.appendChild(info);
+                    gallery.appendChild(item);
+                });
+                
+                updatePagination();
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('gallery').style.display = 'grid';
+                
+            } catch (error) {
+                console.error('Error loading gallery:', error);
+                document.getElementById('loading').innerHTML = 'Error loading media files';
+            }
+        }
+        
+        function updatePagination() {
+            const pageInfo = `Page ${currentPage} of ${totalPages} (Total: ${totalItems} items)`;
+            document.getElementById('topPageInfo').textContent = pageInfo;
+            document.getElementById('bottomPageInfo').textContent = pageInfo;
+            
+            const prevDisabled = currentPage <= 1;
+            const nextDisabled = currentPage >= totalPages;
+            
+            document.getElementById('topPrevBtn').disabled = prevDisabled;
+            document.getElementById('topNextBtn').disabled = nextDisabled;
+            document.getElementById('bottomPrevBtn').disabled = prevDisabled;
+            document.getElementById('bottomNextBtn').disabled = nextDisabled;
+        }
+        
+        function changePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage >= 1 && newPage <= totalPages) {
+                window.location.href = `/?page=${newPage}`;
+            }
+        }
+        
+        // Load gallery on page load
+        loadGallery(currentPage);
+    </script>
+</body>
+</html>

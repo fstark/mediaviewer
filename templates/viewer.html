@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="viewer-body">
+    <div class="viewer-container">
+        <div class="controls">
+            <button class="nav-button" onclick="goBack()">← Back to Gallery</button>
+            <div class="media-title" id="mediaTitle">Loading...</div>
+            <div>
+                <span id="counter">1 of 1</span>
+            </div>
+        </div>
+        
+        <button class="side-nav prev-nav" id="prevBtn" onclick="navigate(-1)">‹</button>
+        <button class="side-nav next-nav" id="nextBtn" onclick="navigate(1)">›</button>
+        
+        <div id="mediaContainer"></div>
+    </div>
+
+    <script>
+        let mediaFiles = [];
+        let currentIndex = {{INDEX}};
+        
+        async function loadMediaList() {
+            try {
+                const response = await fetch('/api/all-media');
+                mediaFiles = await response.json();
+                displayMedia(currentIndex);
+                updateControls();
+            } catch (error) {
+                console.error('Error loading media list:', error);
+            }
+        }
+        
+        function displayMedia(index) {
+            const media = mediaFiles[index];
+            if (!media) return;
+            
+            const container = document.getElementById('mediaContainer');
+            container.innerHTML = '';
+            
+            if (media.is_video) {
+                const video = document.createElement('video');
+                video.src = media.url;
+                video.className = 'media-display';
+                video.controls = true;
+                video.autoplay = true;
+                container.appendChild(video);
+            } else {
+                const img = document.createElement('img');
+                img.src = media.url;
+                img.className = 'media-display';
+                img.alt = `Media ${index + 1}`;
+                container.appendChild(img);
+            }
+            
+            document.getElementById('counter').textContent = `${index + 1} of ${mediaFiles.length}`;
+            document.getElementById('mediaTitle').textContent = media.display_path || `Media ${index + 1}`;
+        }
+        
+        function updateControls() {
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            
+            prevBtn.disabled = currentIndex <= 0;
+            nextBtn.disabled = currentIndex >= mediaFiles.length - 1;
+        }
+        
+        function navigate(direction) {
+            const newIndex = currentIndex + direction;
+            if (newIndex >= 0 && newIndex < mediaFiles.length) {
+                currentIndex = newIndex;
+                displayMedia(currentIndex);
+                updateControls();
+                // Update URL without reloading
+                history.pushState(null, '', `/viewer?index=${currentIndex}`);
+            }
+        }
+        
+        function goBack() {
+            // Calculate which page the current image is on
+            const itemsPerPage = 50;
+            const currentPage = Math.floor(currentIndex / itemsPerPage) + 1;
+            window.location.href = `/?page=${currentPage}`;
+        }
+        
+        // Keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            switch(e.key) {
+                case 'ArrowLeft':
+                    navigate(-1);
+                    break;
+                case 'ArrowRight':
+                    navigate(1);
+                    break;
+                case 'Escape':
+                    goBack();
+                    break;
+            }
+        });
+        
+        // Load media on page load
+        loadMediaList();
+    </script>
+</body>
+</html>

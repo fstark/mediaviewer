@@ -1,0 +1,234 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f0f0f0;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.current-path {
+    font-family: monospace;
+    font-size: 14px;
+    color: #666;
+    margin-top: 10px;
+    word-break: break-all;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 30px;
+    gap: 15px;
+}
+
+.pagination button {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+    background: #0056b3;
+}
+
+.pagination button:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+}
+
+.page-info {
+    font-size: 16px;
+    font-weight: bold;
+    margin: 0 10px;
+}
+
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.media-item {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.media-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+.media-preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.media-info {
+    background: #fff;
+    color: #555;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: left;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+}
+
+.play-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.7);
+    color: white;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+}
+
+.media-container {
+    position: relative;
+    aspect-ratio: 16 / 10;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 18px;
+    color: #666;
+}
+
+/* Viewer-specific styles */
+.viewer-body {
+    margin: 0;
+    padding: 0;
+    background-color: black;
+    color: white;
+    overflow: hidden;
+}
+
+.viewer-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.media-display {
+    max-width: 100vw;
+    max-height: 100vh;
+    object-fit: contain;
+}
+
+.controls {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 100;
+}
+
+.media-title {
+    font-family: monospace;
+    font-size: 14px;
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+    word-break: break-all;
+    max-width: 400px;
+    line-height: 1.2;
+}
+
+.nav-button {
+    background: rgba(0,0,0,0.7);
+    color: white;
+    border: none;
+    padding: 15px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.2s;
+}
+
+.nav-button:hover {
+    background: rgba(0,0,0,0.9);
+}
+
+.nav-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.side-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0,0,0,0.7);
+    color: white;
+    border: none;
+    padding: 20px 15px;
+    cursor: pointer;
+    font-size: 24px;
+    border-radius: 5px;
+    transition: background 0.2s;
+}
+
+.side-nav:hover {
+    background: rgba(0,0,0,0.9);
+}
+
+.side-nav:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prev-nav {
+    left: 20px;
+}
+
+.next-nav {
+    right: 20px;
+}
+
+.media-info {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    text-align: center;
+    background: rgba(0,0,0,0.7);
+    padding: 10px;
+    border-radius: 5px;
+}

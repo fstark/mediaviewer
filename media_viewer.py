@@ -244,6 +244,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             self.serve_media_list()
         elif path == '/api/all-media':
             self.serve_all_media_list()
+        elif path.startswith('/static/'):
+            self.serve_static_file(path)
         elif path.startswith('/preview/'):
             try:
                 media_id = int(path[9:])  # Remove '/preview/' prefix and convert to int
@@ -271,9 +273,52 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         self.response_size += len(data)
         return self.wfile.write(data)
 
+    def serve_static_file(self, path):
+        """Serve static files (CSS, JS, etc.)"""
+        # Get the script directory to find static files relative to the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, path.lstrip('/'))
+        
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type is None:
+                mime_type = 'application/octet-stream'
+            
+            try:
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                
+                self.send_response(200)
+                self.send_header('Content-Type', mime_type)
+                self.send_header('Content-Length', str(len(content)))
+                self.end_headers()
+                self.write_response(content)
+            except IOError:
+                self.send_error(404)
+        else:
+            self.send_error(404)
+
+    def load_template(self, template_name):
+        """Load an HTML template from the templates directory"""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        template_path = os.path.join(script_dir, 'templates', template_name)
+        
+        try:
+            with open(template_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except IOError:
+            return None
+
     def serve_gallery(self, page=1):
         """Serve the main gallery page with pagination"""
-        html = self.get_gallery_html(page)
+        template = self.load_template('gallery.html')
+        if template is None:
+            self.send_error(500, "Template not found")
+            return
+        
+        # Replace template variables
+        html = template.replace('{{PAGE}}', str(page))
+        
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
@@ -282,7 +327,14 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def serve_viewer(self, index):
         """Serve the full-screen viewer page"""
         if 0 <= index < len(self.media_files):
-            html = self.get_viewer_html(index)
+            template = self.load_template('viewer.html')
+            if template is None:
+                self.send_error(500, "Template not found")
+                return
+            
+            # Replace template variables
+            html = template.replace('{{INDEX}}', str(index))
+            
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
@@ -516,458 +568,6 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
     def is_video_file(self, file_path):
         """Check if file is a video"""
         return file_path.lower().endswith(('.mp4', '.m4v'))
-
-    def get_gallery_html(self, page=1):
-        """Generate the gallery HTML with pagination"""
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Viewer</title>
-    <style>
-        body {{
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f0f0f0;
-        }}
-        .header {{
-            text-align: center;
-            margin-bottom: 30px;
-        }}
-        .current-path {{
-            font-family: monospace;
-            font-size: 14px;
-            color: #666;
-            margin-top: 10px;
-            word-break: break-all;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-        }}
-        .pagination {{
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-bottom: 30px;
-            gap: 15px;
-        }}
-        .pagination button {{
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background 0.2s;
-        }}
-        .pagination button:hover:not(:disabled) {{
-            background: #0056b3;
-        }}
-        .pagination button:disabled {{
-            background: #6c757d;
-            cursor: not-allowed;
-        }}
-        .page-info {{
-            font-size: 16px;
-            font-weight: bold;
-            margin: 0 10px;
-        }}
-        .gallery {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }}
-        .media-item {{
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            overflow: hidden;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }}
-        .media-item:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-        }}
-        .media-preview {{
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            display: block;
-        }}
-        .media-info {{
-            background: #fff;
-            color: #555;
-            padding: 6px 8px;
-            font-size: 12px;
-            font-weight: bold;
-            text-align: left;
-            height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            box-sizing: border-box;
-        }}
-        .play-overlay {{
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border-radius: 50%;
-            width: 60px;
-            height: 60px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-        }}
-        .media-container {{
-            position: relative;
-            aspect-ratio: 16 / 10;
-        }}
-        .loading {{
-            text-align: center;
-            padding: 40px;
-            font-size: 18px;
-            color: #666;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Media Viewer</h1>
-        <p>Click on any image or video to view in full screen</p>
-        <div id="currentPath" class="current-path"></div>
-    </div>
-    
-    <div class="pagination" id="topPagination">
-        <button id="topPrevBtn" onclick="changePage(-1)">← Previous</button>
-        <div class="page-info" id="topPageInfo">Page 1 of 1</div>
-        <button id="topNextBtn" onclick="changePage(1)">Next →</button>
-    </div>
-    
-    <div class="loading" id="loading">Loading media...</div>
-    <div class="gallery" id="gallery" style="display: none;"></div>
-    
-    <div class="pagination" id="bottomPagination">
-        <button id="bottomPrevBtn" onclick="changePage(-1)">← Previous</button>
-        <div class="page-info" id="bottomPageInfo">Page 1 of 1</div>
-        <button id="bottomNextBtn" onclick="changePage(1)">Next →</button>
-    </div>
-
-    <script>
-        let currentPage = {page};
-        let totalPages = 1;
-        let totalItems = 0;
-        
-        function formatFileSize(bytes) {{
-            if (bytes === 0) return '0 B';
-            const k = 1024;
-            const sizes = ['B', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-        }}
-        
-        async function loadGallery(page = 1) {{
-            try {{
-                document.getElementById('loading').style.display = 'block';
-                document.getElementById('gallery').style.display = 'none';
-                
-                const response = await fetch('/api/media', {{
-                    headers: {{
-                        'X-Page': page.toString()
-                    }}
-                }});
-                const data = await response.json();
-                
-                const mediaFiles = data.media;
-                const pagination = data.pagination;
-                
-                currentPage = pagination.current_page;
-                totalPages = pagination.total_pages;
-                totalItems = pagination.total_items;
-                
-                const gallery = document.getElementById('gallery');
-                gallery.innerHTML = '';
-                
-                mediaFiles.forEach(media => {{
-                    const item = document.createElement('div');
-                    item.className = 'media-item';
-                    item.onclick = () => window.location.href = `/viewer?index=${{media.index}}`;
-                    
-                    const container = document.createElement('div');
-                    container.className = 'media-container';
-                    
-                    // All previews are now images (GIFs for videos, PNGs for images)
-                    const img = document.createElement('img');
-                    img.src = media.preview_url;
-                    img.className = 'media-preview';
-                    img.alt = `Media ${{media.index + 1}}`;
-                    container.appendChild(img);
-                    
-                    const info = document.createElement('div');
-                    info.className = 'media-info';
-                    const fileName = `Media ${{media.index + 1}}`;
-                    const fileSize = formatFileSize(media.file_size);
-                    const fileType = media.file_type;
-                    info.innerHTML = `<span>${{fileName}}</span><span>${{fileSize}} • ${{fileType}}</span>`;
-                    
-                    item.appendChild(container);
-                    item.appendChild(info);
-                    gallery.appendChild(item);
-                }});
-                
-                updatePagination();
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('gallery').style.display = 'grid';
-                
-            }} catch (error) {{
-                console.error('Error loading gallery:', error);
-                document.getElementById('loading').innerHTML = 'Error loading media files';
-            }}
-        }}
-        
-        function updatePagination() {{
-            const pageInfo = `Page ${{currentPage}} of ${{totalPages}} (Total: ${{totalItems}} items)`;
-            document.getElementById('topPageInfo').textContent = pageInfo;
-            document.getElementById('bottomPageInfo').textContent = pageInfo;
-            
-            const prevDisabled = currentPage <= 1;
-            const nextDisabled = currentPage >= totalPages;
-            
-            document.getElementById('topPrevBtn').disabled = prevDisabled;
-            document.getElementById('topNextBtn').disabled = nextDisabled;
-            document.getElementById('bottomPrevBtn').disabled = prevDisabled;
-            document.getElementById('bottomNextBtn').disabled = nextDisabled;
-        }}
-        
-        function changePage(direction) {{
-            const newPage = currentPage + direction;
-            if (newPage >= 1 && newPage <= totalPages) {{
-                window.location.href = `/?page=${{newPage}}`;
-            }}
-        }}
-        
-        // Load gallery on page load
-        loadGallery(currentPage);
-    </script>
-</body>
-</html>'''
-
-    def get_viewer_html(self, index):
-        """Generate the viewer HTML"""
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Viewer</title>
-    <style>
-        body {{
-            margin: 0;
-            padding: 0;
-            background-color: black;
-            color: white;
-            font-family: Arial, sans-serif;
-            overflow: hidden;
-        }}
-        .viewer-container {{
-            position: relative;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }}
-        .media-display {{
-            max-width: 100vw;
-            max-height: 100vh;
-            object-fit: contain;
-        }}
-        .controls {{
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            right: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 100;
-        }}
-        .media-title {{
-            font-family: monospace;
-            font-size: 14px;
-            color: rgba(255,255,255,0.8);
-            text-align: center;
-            word-break: break-all;
-            max-width: 400px;
-            line-height: 1.2;
-        }}
-        .nav-button {{
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: none;
-            padding: 15px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background 0.2s;
-        }}
-        .nav-button:hover {{
-            background: rgba(0,0,0,0.9);
-        }}
-        .nav-button:disabled {{
-            opacity: 0.5;
-            cursor: not-allowed;
-        }}
-        .side-nav {{
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: none;
-            padding: 20px 15px;
-            cursor: pointer;
-            font-size: 24px;
-            border-radius: 5px;
-            transition: background 0.2s;
-        }}
-        .side-nav:hover {{
-            background: rgba(0,0,0,0.9);
-        }}
-        .side-nav:disabled {{
-            opacity: 0.5;
-            cursor: not-allowed;
-        }}
-        .prev-nav {{
-            left: 20px;
-        }}
-        .next-nav {{
-            right: 20px;
-        }}
-        .media-info {{
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            right: 20px;
-            text-align: center;
-            background: rgba(0,0,0,0.7);
-            padding: 10px;
-            border-radius: 5px;
-        }}
-    </style>
-</head>
-<body>
-    <div class="viewer-container">
-        <div class="controls">
-            <button class="nav-button" onclick="goBack()">← Back to Gallery</button>
-            <div class="media-title" id="mediaTitle">Loading...</div>
-            <div>
-                <span id="counter">1 of 1</span>
-            </div>
-        </div>
-        
-        <button class="side-nav prev-nav" id="prevBtn" onclick="navigate(-1)">‹</button>
-        <button class="side-nav next-nav" id="nextBtn" onclick="navigate(1)">›</button>
-        
-        <div id="mediaContainer"></div>
-    </div>
-
-    <script>
-        let mediaFiles = [];
-        let currentIndex = {index};
-        
-        async function loadMediaList() {{
-            try {{
-                const response = await fetch('/api/all-media');
-                mediaFiles = await response.json();
-                displayMedia(currentIndex);
-                updateControls();
-            }} catch (error) {{
-                console.error('Error loading media list:', error);
-            }}
-        }}
-        
-        function displayMedia(index) {{
-            const media = mediaFiles[index];
-            if (!media) return;
-            
-            const container = document.getElementById('mediaContainer');
-            container.innerHTML = '';
-            
-            if (media.is_video) {{
-                const video = document.createElement('video');
-                video.src = media.url;
-                video.className = 'media-display';
-                video.controls = true;
-                video.autoplay = true;
-                container.appendChild(video);
-            }} else {{
-                const img = document.createElement('img');
-                img.src = media.url;
-                img.className = 'media-display';
-                img.alt = `Media ${{index + 1}}`;
-                container.appendChild(img);
-            }}
-            
-            document.getElementById('counter').textContent = `${{index + 1}} of ${{mediaFiles.length}}`;
-            document.getElementById('mediaTitle').textContent = media.display_path || `Media ${{index + 1}}`;
-        }}
-        
-        function updateControls() {{
-            const prevBtn = document.getElementById('prevBtn');
-            const nextBtn = document.getElementById('nextBtn');
-            
-            prevBtn.disabled = currentIndex <= 0;
-            nextBtn.disabled = currentIndex >= mediaFiles.length - 1;
-        }}
-        
-        function navigate(direction) {{
-            const newIndex = currentIndex + direction;
-            if (newIndex >= 0 && newIndex < mediaFiles.length) {{
-                currentIndex = newIndex;
-                displayMedia(currentIndex);
-                updateControls();
-                // Update URL without reloading
-                history.pushState(null, '', `/viewer?index=${{currentIndex}}`);
-            }}
-        }}
-        
-        function goBack() {{
-            // Calculate which page the current image is on
-            const itemsPerPage = 50;
-            const currentPage = Math.floor(currentIndex / itemsPerPage) + 1;
-            window.location.href = `/?page=${{currentPage}}`;
-        }}
-        
-        // Keyboard navigation
-        document.addEventListener('keydown', function(e) {{
-            switch(e.key) {{
-                case 'ArrowLeft':
-                    navigate(-1);
-                    break;
-                case 'ArrowRight':
-                    navigate(1);
-                    break;
-                case 'Escape':
-                    goBack();
-                    break;
-            }}
-        }});
-        
-        // Load media on page load
-        loadMediaList();
-    </script>
-</body>
-</html>'''
 
 
 def create_handler_with_media(media_files, base_dir, verbose=False):

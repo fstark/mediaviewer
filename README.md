@@ -65,10 +65,17 @@ python media_viewer.py /path/to/media --port 9000
 
 ```
 mediaviewer/
-├── media_viewer.py    # Main application file
-├── requirements.txt   # Dependencies (none required)
-└── README.md         # This file
+├── media_viewer.py       # Main application file
+├── requirements.txt      # Python dependencies
+├── README.md            # This file
+├── templates/           # HTML templates
+│   ├── gallery.html     # Gallery page template
+│   └── viewer.html      # Viewer page template
+└── static/              # Static assets
+    └── style.css        # Stylesheet for all pages
 ```
+
+The application uses a simple templating system where HTML and CSS are separated from the Python code for better maintainability.
 
 ## Security Note
 
