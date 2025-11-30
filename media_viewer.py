@@ -977,7 +977,7 @@ def create_handler_with_media(media_files, base_dir, verbose=False):
     return handler
 
 
-def scan_for_media_files(directory, verbose=False):
+def scan_for_media_files(directory, verbose=False, select_filter=None):
     """Recursively scan directory for media files"""
     media_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.mp4', '.m4v'}
     media_files = []
@@ -991,6 +991,10 @@ def scan_for_media_files(directory, verbose=False):
                     # Skip 0-byte files
                     file_size = os.path.getsize(full_path)
                     if file_size == 0:
+                        continue
+                    
+                    # Apply selection filter if provided (check full path)
+                    if select_filter and select_filter not in full_path:
                         continue
                         
                     if any(file.lower().endswith(ext) for ext in media_extensions):
@@ -1055,6 +1059,7 @@ def main():
     parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run server on (default: 8000)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Display original file names when serving files')
     parser.add_argument('--build-cache', action='store_true', help='Build image preview cache at startup')
+    parser.add_argument('--select', type=str, default=None, help='Only include files containing this string in their filename')
     args = parser.parse_args()
 
     # Create cache directories
@@ -1072,7 +1077,9 @@ def main():
     
     # Scan for media files
     print(f"Scanning for media files in: {base_dir}")
-    media_files = scan_for_media_files(base_dir, args.verbose)
+    if args.select:
+        print(f"Filtering files containing: '{args.select}'")
+    media_files = scan_for_media_files(base_dir, args.verbose, args.select)
 
     if not media_files:
         print("No media files found (looking for: png, jpg, jpeg, gif, mp4, m4v)")
