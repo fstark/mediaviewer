@@ -5,3 +5,4 @@ __pycache__/
 Thumbs.db
 venv/
 .mediaviewer/
+nohup.out

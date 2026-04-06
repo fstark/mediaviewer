@@ -136,6 +136,34 @@
         <div style="text-align:center; margin-bottom:20px;">
             <input type="text" id="wordFilter" placeholder="Type to filter words..." style="padding:8px 16px; border-radius:5px; border:1px solid #ccc; font-size:15px; width:300px; max-width:90%;">
         </div>
+        
+        <!-- Rating filter checkboxes -->
+        <div style="text-align:center; margin-bottom:20px;">
+            <div style="display: inline-block; padding: 12px 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                <strong style="margin-right: 15px;">Show ratings:</strong>
+                <label style="margin-right: 15px; cursor: pointer;">
+                    <input type="checkbox" id="rating-1" value="-1" checked>
+                    Unrated
+                </label>
+                <label style="margin-right: 15px; cursor: pointer;">
+                    <input type="checkbox" id="rating0" value="0" checked>
+                    0
+                </label>
+                <label style="margin-right: 15px; cursor: pointer;">
+                    <input type="checkbox" id="rating1" value="1" checked>
+                    1
+                </label>
+                <label style="margin-right: 15px; cursor: pointer;">
+                    <input type="checkbox" id="rating2" value="2" checked>
+                    2
+                </label>
+                <label style="margin-right: 0; cursor: pointer;">
+                    <input type="checkbox" id="rating3" value="3" checked>
+                    3
+                </label>
+            </div>
+        </div>
+        
         <div class="filter-status" id="filterStatus">
             No filter active
         </div>
@@ -205,7 +233,17 @@
         
         async function filterByWord(word) {
             try {
-                const response = await fetch(`/api/filter?word=${encodeURIComponent(word)}`);
+                // Get selected ratings
+                const selectedRatings = [];
+                ['rating-1', 'rating0', 'rating1', 'rating2', 'rating3'].forEach(id => {
+                    const checkbox = document.getElementById(id);
+                    if (checkbox && checkbox.checked) {
+                        selectedRatings.push(checkbox.value);
+                    }
+                });
+                
+                const ratingsParam = selectedRatings.join(',');
+                const response = await fetch(`/api/filter?word=${encodeURIComponent(word)}&ratings=${encodeURIComponent(ratingsParam)}`);
                 const data = await response.json();
                 
                 if (data.success) {
@@ -235,19 +273,54 @@
             }
         }
         
+        async function applyRatingFilter() {
+            try {
+                // Get selected ratings
+                const selectedRatings = [];
+                ['rating-1', 'rating0', 'rating1', 'rating2', 'rating3'].forEach(id => {
+                    const checkbox = document.getElementById(id);
+                    if (checkbox && checkbox.checked) {
+                        selectedRatings.push(checkbox.value);
+                    }
+                });
+                
+                const ratingsParam = selectedRatings.join(',');
+                const response = await fetch(`/api/filter?word=&ratings=${encodeURIComponent(ratingsParam)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Reload words to reflect the new filter
+                    loadWords();
+                } else {
+                    console.error('Error applying rating filter:', data.error);
+                }
+            } catch (error) {
+                console.error('Error applying rating filter:', error);
+            }
+        }
+        
         // Load words on page load
         loadWords();
-            // Filter word tags as user types
-            document.addEventListener('DOMContentLoaded', function() {
-                const filterInput = document.getElementById('wordFilter');
-                filterInput.addEventListener('input', function() {
-                    const filter = this.value.toLowerCase();
-                    allWordTags.forEach(tag => {
-                        const word = tag.dataset.word.toLowerCase();
-                        tag.style.display = word.includes(filter) ? '' : 'none';
-                    });
+        
+        // Filter word tags as user types
+        document.addEventListener('DOMContentLoaded', function() {
+            const filterInput = document.getElementById('wordFilter');
+            filterInput.addEventListener('input', function() {
+                const filter = this.value.toLowerCase();
+                allWordTags.forEach(tag => {
+                    const word = tag.dataset.word.toLowerCase();
+                    tag.style.display = word.includes(filter) ? '' : 'none';
                 });
             });
+            
+            // Add change listeners to rating checkboxes
+            ['rating-1', 'rating0', 'rating1', 'rating2', 'rating3'].forEach(id => {
+                const checkbox = document.getElementById(id);
+                if (checkbox) {
+                    checkbox.addEventListener('change', applyRatingFilter);
+                }
+            });
+        });
     </script>
 </body>
 </html>

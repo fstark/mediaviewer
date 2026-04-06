@@ -25,6 +25,7 @@ PREVIEW_FRAME_DURATION_MS = 300  # Duration per frame in animated previews
 PREVIEW_FRAME_COUNT = 11  # Number of frames to extract for previews (includes first and last)
 CACHE_DIR = None  # Will be set to <base_dir>/.mediaviewer
 WORD_COUNTS = {}  # Global word counter for all file paths
+RATINGS = {}  # File path -> rating mapping (path: rating). Default -1 (unrated)
 CORPUS = []  # All media files found (never changes)
 MEDIA_FILES = []  # Current selection (can be filtered)
 
@@ -37,6 +38,11 @@ class MediaFile:
         self._md5 = None
         # Extract words from path and update global counter
         self.extract_words_from_path()
+
+    @property
+    def rating(self):
+        """Get rating for this file, default -1 (unrated)"""
+        return RATINGS.get(self.path, -1)
 
     @property
     def md5(self):
@@ -61,6 +67,10 @@ class MediaFile:
         for word in words:
             word_lower = word.lower()
             WORD_COUNTS[word_lower] = WORD_COUNTS.get(word_lower, 0) + 1
+
+    def set_rating(self, rating):
+        """Set rating for this file"""
+        RATINGS[self.path] = rating
 
     def get_preview(self):
         """Return (content_type, content) for preview"""
@@ -234,6 +244,40 @@ def generate_video_preview(video_path, md5):
         placeholder.save(preview_path, format='GIF')
 
 
+def load_ratings(ratings_file):
+    """Load ratings from text file. Format: path rating"""
+    global RATINGS
+    RATINGS = {}
+    if os.path.exists(ratings_file):
+        try:
+            with open(ratings_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        parts = line.rsplit(' ', 1)  # Split from right to get rating
+                        if len(parts) == 2:
+                            path, rating_str = parts
+                            try:
+                                rating = int(rating_str)
+                                RATINGS[path] = rating
+                            except ValueError:
+                                pass
+            print(f"Loaded {len(RATINGS)} ratings from {ratings_file}")
+        except Exception as e:
+            print(f"Error loading ratings: {e}")
+
+
+def save_ratings(ratings_file):
+    """Save ratings to text file. Format: path rating"""
+    try:
+        with open(ratings_file, 'w', encoding='utf-8') as f:
+            for path in sorted(RATINGS.keys()):
+                rating = RATINGS[path]
+                f.write(f"{path} {rating}\n")
+    except Exception as e:
+        print(f"Error saving ratings: {e}")
+
+
 class MediaViewerHandler(BaseHTTPRequestHandler):
     def __init__(self, base_dir, verbose=False, *args, **kwargs):
         self.base_dir = base_dir
@@ -270,7 +314,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
             self.serve_words_data()
         elif path == '/api/filter':
             word = query.get('word', [''])[0]
-            self.serve_filter_by_word(word)
+            ratings = query.get('ratings', [''])[0]
+            self.serve_filter_by_word(word, ratings)
         elif path == '/api/reset':
             self.serve_reset_filter()
         elif path.startswith('/static/'):
@@ -287,6 +332,23 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                 self.serve_media_by_id(media_id)
             except (ValueError, IndexError):
                 self.send_error(404)
+        else:
+            self.send_error(404)
+        
+        # Log request timing and response size
+        if self.start_time:
+            duration_ms = (time.time() - self.start_time) * 1000
+            self.log_message(f"Response: {self.response_size} bytes, Duration: {duration_ms:.2f}ms")
+
+    def do_POST(self):
+        """Handle POST requests"""
+        self.start_time = time.time()
+        self.response_size = 0
+        
+        path = urllib.parse.urlparse(self.path).path
+        
+        if path == '/api/set-rating':
+            self.handle_set_rating()
         else:
             self.send_error(404)
         
@@ -406,15 +468,36 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.write_response(json.dumps(response_data).encode())
 
-    def serve_filter_by_word(self, word):
-        """Filter MEDIA_FILES by word"""
+    def serve_filter_by_word(self, word, ratings_param=None):
+        """Filter MEDIA_FILES by word and ratings"""
         global MEDIA_FILES
-        if word:
-            word_lower = word.lower()
-            MEDIA_FILES = [mf for mf in CORPUS if word_lower in mf.path.lower()]
+        
+        # Parse ratings parameter (comma-separated list like "-1,0,1")
+        selected_ratings = None
+        if ratings_param:
+            try:
+                selected_ratings = [int(r) for r in ratings_param.split(',')]
+            except ValueError:
+                pass
+        
+        if word or selected_ratings is not None:
+            word_lower = word.lower() if word else None
+            filtered = []
+            
+            for mf in CORPUS:
+                # Check word match
+                word_match = (not word_lower) or (word_lower in mf.path.lower())
+                
+                # Check rating match
+                rating_match = (selected_ratings is None) or (mf.rating in selected_ratings)
+                
+                if word_match and rating_match:
+                    filtered.append(mf)
+            
+            MEDIA_FILES = filtered
             result = {'success': True, 'word': word, 'count': len(MEDIA_FILES)}
         else:
-            result = {'success': False, 'error': 'No word provided'}
+            result = {'success': False, 'error': 'No filter provided'}
         
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
@@ -426,6 +509,39 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
         global MEDIA_FILES
         MEDIA_FILES = CORPUS[:]
         result = {'success': True, 'count': len(MEDIA_FILES)}
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.write_response(json.dumps(result).encode())
+
+    def handle_set_rating(self):
+        """Handle POST request to set rating for a file"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            index = data.get('index')
+            rating = data.get('rating')
+            
+            if index is None or rating is None:
+                result = {'success': False, 'error': 'Missing index or rating'}
+            elif index < 0 or index >= len(MEDIA_FILES):
+                result = {'success': False, 'error': 'Invalid index'}
+            elif rating not in [0, 1, 2, 3]:
+                result = {'success': False, 'error': 'Invalid rating (must be 0, 1, 2, or 3)'}
+            else:
+                media_file = MEDIA_FILES[index]
+                media_file.set_rating(rating)
+                
+                # Save ratings to file
+                ratings_file = os.path.join(CACHE_DIR, 'ratings.txt')
+                save_ratings(ratings_file)
+                
+                result = {'success': True, 'index': index, 'rating': rating}
+        except Exception as e:
+            result = {'success': False, 'error': str(e)}
         
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
@@ -451,7 +567,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                 'preview_url': f'/preview/{i}',
                 'is_video': media_file.is_video,
                 'file_size': media_file.file_size,
-                'file_type': media_file.file_type
+                'file_type': media_file.file_type,
+                'rating': media_file.rating
             })
         
         response_data = {
@@ -485,7 +602,8 @@ class MediaViewerHandler(BaseHTTPRequestHandler):
                 'index': i,
                 'url': f'/media/{i}',
                 'is_video': media_file.is_video,
-                'display_path': display_path
+                'display_path': display_path,
+                'rating': media_file.rating
             })
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
@@ -770,6 +888,10 @@ def main():
     CACHE_DIR = os.path.join(base_dir, '.mediaviewer')
     previews_dir = os.path.join(CACHE_DIR, 'previews')
     os.makedirs(previews_dir, exist_ok=True)
+    
+    # Load ratings file
+    ratings_file = os.path.join(CACHE_DIR, 'ratings.txt')
+    load_ratings(ratings_file)
     
     # Scan for media files
     print(f"Scanning for media files in: {base_dir}")
